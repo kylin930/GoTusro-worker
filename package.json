@@ -1,0 +1,15 @@
+{
+  "name": "gotusro-worker",
+  "version": "0.0.2",
+  "description": "Cloudflare Worker for GoTusro (HTTP Tunneling)",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240512.0",
+    "typescript": "^5.0.0",
+    "wrangler": "^3.0.0"
+  }
+}
