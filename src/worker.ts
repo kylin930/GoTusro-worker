@@ -1,8 +1,7 @@
-// worker.ts
+import { neon } from '@neondatabase/serverless';
 
 export interface Env {
-  UPSTASH_REDIS_REST_URL: string;
-  UPSTASH_REDIS_REST_TOKEN: string;
+  DATABASE_URL: string;
 }
 
 // 辅助函数：将 ArrayBuffer 转换为 Base64 字符串
@@ -27,24 +26,24 @@ function base64ToUint8Array(base64: string): Uint8Array {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    try {
-      // 1. 生成唯一请求 ID
-      const reqId = crypto.randomUUID();
+    // 初始化 Neon Serverless 驱动
+    const sql = neon(env.DATABASE_URL);
+    const reqId = crypto.randomUUID();
 
-      // 2. 解析请求路径和查询参数
+    try {
+      // 1. 解析请求路径和查询参数
       const url = new URL(request.url);
       const pathWithQuery = url.pathname + url.search;
 
-      // 解析 Headers
+      // 2. 解析 Headers
       const headers: Record<string, string> = {};
       request.headers.forEach((value, key) => {
-        // 过滤掉一些可能影响本地转发的 Cloudflare 特有请求头
         if (!key.toLowerCase().startsWith('cf-') && key.toLowerCase() !== 'host') {
           headers[key] = value;
         }
       });
 
-      // 解析并 Base64 编码 Body
+      // 3. 解析并 Base64 编码 Body
       let bodyBase64 = "";
       if (request.body) {
         const arrayBuffer = await request.arrayBuffer();
@@ -53,70 +52,71 @@ export default {
         }
       }
 
-        const proxyReq = {
+      const proxyReq = {
         req_id: reqId,
         hostname: url.hostname,
         method: request.method,
         path: pathWithQuery,
         headers: headers,
         body: bodyBase64
-        };
+      };
 
-      // 3. 将任务推送到 Upstash Redis 队列 (LPUSH)
-      const pushUrl = `${env.UPSTASH_REDIS_REST_URL}/lpush/tunnel:requests`;
-      await fetch(pushUrl, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${env.UPSTASH_REDIS_REST_TOKEN}` },
-        body: JSON.stringify(proxyReq)
-      });
+      // 4. 将任务写入 PostgreSQL 并触发 NOTIFY 通知 Go 客户端
+      // 使用 ::jsonb 显式转换确保格式正确
+      await sql`
+        INSERT INTO tunnel_tasks (req_id, req_data) 
+        VALUES (${reqId}, ${JSON.stringify(proxyReq)}::jsonb);
+        SELECT pg_notify('tunnel_channel', ${reqId});
+      `;
 
-      // 4. 异步轮询等待 Go 客户端的结果
+      // 5. 异步轮询等待 Go 客户端返回的数据库结果
       const startTime = Date.now();
       const timeoutMs = 15000; // 15秒超时
       const pollIntervalMs = 50; // 每隔 50ms 轮询一次
-      const getUrl = `${env.UPSTASH_REDIS_REST_URL}/get/tunnel:response:${reqId}`;
 
       while (Date.now() - startTime < timeoutMs) {
-        const res = await fetch(getUrl, {
-          headers: { 'Authorization': `Bearer ${env.UPSTASH_REDIS_REST_TOKEN}` }
-        });
+        // HTTP API 模式查询，极度轻量且不占用长连接
+        const rows = await sql`
+          SELECT res_data FROM tunnel_tasks 
+          WHERE req_id = ${reqId} AND status = 'done'
+        `;
         
-        if (res.ok) {
-          const data = await res.json() as any;
+        if (rows.length > 0 && rows[0].res_data) {
+          const proxyRes = rows[0].res_data;
           
-          // Upstash REST API 返回格式为 {"result": "值"}，如果键不存在，result 为 null
-          if (data.result !== null) {
-            // 解析 Go 传回的 JSON 数据
-            const proxyRes = JSON.parse(data.result);
-            
-            // 组装最终响应的 Headers
-            const responseHeaders = new Headers();
-            for (const [key, value] of Object.entries(proxyRes.headers || {})) {
-              responseHeaders.set(key, value as string);
-            }
-
-            // Base64 解码响应体
-            let responseBody: Uint8Array | null = null;
-            if (proxyRes.body) {
-              responseBody = base64ToUint8Array(proxyRes.body);
-            }
-
-            // 返回标准 Response 给访客
-            return new Response(responseBody, {
-              status: proxyRes.status_code,
-              headers: responseHeaders
-            });
+          // 组装最终响应的 Headers
+          const responseHeaders = new Headers();
+          for (const [key, value] of Object.entries(proxyRes.headers || {})) {
+            responseHeaders.set(key, value as string);
           }
+
+          // Base64 解码响应体
+          let responseBody: Uint8Array | null = null;
+          if (proxyRes.body) {
+            responseBody = base64ToUint8Array(proxyRes.body);
+          }
+
+          // 异步清理已完成的任务，保持数据库干净 (waitUntil 允许在返回后继续执行)
+          ctx.waitUntil(sql`DELETE FROM tunnel_tasks WHERE req_id = ${reqId}`);
+
+          // 返回标准 Response 给访客
+          return new Response(responseBody, {
+            status: proxyRes.status_code,
+            headers: responseHeaders
+          });
         }
         
         // 延时后继续下一次轮询
         await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
       }
 
-      // 5. 超时处理
+      // 6. 超时处理及清理僵尸记录
+      ctx.waitUntil(sql`DELETE FROM tunnel_tasks WHERE req_id = ${reqId}`);
       return new Response("Gateway Timeout: 本地服务未响应", { status: 504 });
 
     } catch (err: any) {
+      // 发生异常时也尝试清理记录
+      ctx.waitUntil(sql`DELETE FROM tunnel_tasks WHERE req_id = ${reqId}`);
       return new Response(`Worker Error: ${err.message}`, { status: 500 });
     }
   },
