@@ -62,11 +62,16 @@ export default {
       };
 
       // 4. 将任务写入 PostgreSQL 并触发 NOTIFY 通知 Go 客户端
-      // 使用 ::jsonb 显式转换确保格式正确
+      // 注意：这里必须拆分为两次独立的查询，不能用分号连在一起
+      const reqJsonStr = JSON.stringify(proxyReq);
+      
       await sql`
         INSERT INTO tunnel_tasks (req_id, req_data) 
-        VALUES (${reqId}, ${JSON.stringify(proxyReq)}::jsonb);
-        SELECT pg_notify('tunnel_channel', ${reqId});
+        VALUES (${reqId}, ${reqJsonStr}::jsonb)
+      `;
+
+      await sql`
+        SELECT pg_notify('tunnel_channel', ${reqId})
       `;
 
       // 5. 异步轮询等待 Go 客户端返回的数据库结果
