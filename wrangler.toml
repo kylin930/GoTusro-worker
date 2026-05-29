@@ -3,5 +3,4 @@ main = "src/worker.ts"
 compatibility_date = "2026-05-18"
 
 [vars]
-UPSTASH_REDIS_REST_URL = "https://test.upstash.io"
-UPSTASH_REDIS_REST_TOKEN = "9191"
+DATABASE_URL = "postgresql://<user>:<password>@<ep-xxx>.neon.tech/neondb?sslmode=require"
