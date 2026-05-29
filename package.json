@@ -1,11 +1,14 @@
 {
   "name": "gotusro-worker",
-  "version": "0.0.2",
-  "description": "Cloudflare Worker for GoTusro (HTTP Tunneling)",
+  "version": "0.0.3",
+  "description": "Cloudflare Worker for GoTusro (HTTP Tunneling over PostgreSQL)",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.9.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240512.0",
