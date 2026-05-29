@@ -118,12 +118,12 @@ GoTusro 链路探针
 [1] Worker 节点总耗时: ${workerTotalTime} ms
 [2] 数据库等待与轮询耗时: ${dbWaitTime} ms
 
---- Go 客户端内部拆解 ---
+--- Go 客户端 ---
 [3] 接收延迟 (Worker发往DB -> Go读取完毕): ${receiveMs} ms
 [4] 发送耗时 (Go请求本地服务 -> 拿到结果): ${forwardMs} ms
 [5] 渲染耗时 (DB读取/Base64/JSON解析等): ${renderMs} ms
 
-* 提示: 接收延迟(3)依赖 Worker 与本地服务器时钟同步。若本地未开 NTP 对时，此项可能不准。`;
+* 说明: 接收延迟(3)依赖 Worker 与本地服务器时钟同步。误差取决于go客户端的时钟偏移。`;
 
              return new Response(debugText, {
                  status: 200,
